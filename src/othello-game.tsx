@@ -298,7 +298,6 @@ const expressionToImage = {
   [IkemenExpressions.HAPPY]: "happy.png",
   [IkemenExpressions.SAD]: "sad.png"
 };
-
 // 画像が見つからない場合のフォールバック用絵文字
 const expressionToFace = {
   [IkemenExpressions.NORMAL]: "😐",
@@ -345,9 +344,40 @@ const OthelloGame = () => {
     { row: -1, col: -1 }
   ];
 
+  // 画像の初期化とプリロード関数
+  const preloadImages = () => {
+    const expressions = Object.keys(expressionToImage);
+    
+    // すべての表情の画像をプリロード
+    expressions.forEach(expression => {
+      const imageName = expressionToImage[expression as keyof typeof expressionToImage];
+      const imagePath = `${process.env.PUBLIC_URL}/images/${imageName}`;
+      
+      const img = new Image();
+      img.src = imagePath;
+      
+      img.onload = () => {
+        console.log(`Successfully loaded image: ${imagePath}`);
+        setImagesLoaded(prev => ({
+          ...prev,
+          [expression]: true
+        }));
+      };
+      
+      img.onerror = (error) => {
+        console.error(`Failed to load image: ${imagePath}`, error);
+        setImagesLoaded(prev => ({
+          ...prev,
+          [expression]: false
+        }));
+      };
+    });
+  };
+
   // アニメーションスタイルの注入
   useEffect(() => {
     injectStyles();
+    preloadImages(); // 画像をプリロード
   }, []);
 
   // 勝利時に紙吹雪を生成
@@ -522,48 +552,67 @@ const OthelloGame = () => {
     return { black, white };
   };
 
-  // ゲームが終了したかチェックする関数
-  const checkGameOver = (board: string[][]) => {
-    const blackMoves = getAvailableMoves('black');
-    const whiteMoves = getAvailableMoves('white');
+// ゲームが終了したかチェックする関数
+const checkGameOver = (board: string[][]) => {
+  const blackMoves = getAvailableMoves('black');
+  const whiteMoves = getAvailableMoves('white');
+  
+  if (blackMoves.length === 0 && whiteMoves.length === 0) {
+    const scores = calculateScores(board);
+    setScores(scores);
+    setGameOver(true);
     
-    if (blackMoves.length === 0 && whiteMoves.length === 0) {
-      const scores = calculateScores(board);
-      setScores(scores);
-      setGameOver(true);
+    // 勝敗結果を設定
+    let result: 'win' | 'lose' | 'draw' = 'draw';
+    
+    if (scores.black > scores.white) {
+      // 黒の勝ち
+      result = playerColor === 'black' ? 'win' : 'lose';
       
-      // 勝敗結果を設定
-      let result: 'win' | 'lose' | 'draw' = 'draw';
-      
-      if (scores.black > scores.white) {
-        result = playerColor === 'black' ? 'win' : 'lose';
-        setMessage(playerColor === 'black' ? getRandomMessage('win') : getRandomMessage('lose'));
-        setIkemenExpression(playerColor === 'black' ? IkemenExpressions.SAD : IkemenExpressions.HAPPY);
-      } else if (scores.white > scores.black) {
-        result = playerColor === 'white' ? 'win' : 'lose';
-        setMessage(playerColor === 'white' ? getRandomMessage('win') : getRandomMessage('lose'));
-        setIkemenExpression(playerColor === 'white' ? IkemenExpressions.SAD : IkemenExpressions.HAPPY);
+      if (playerColor === 'black') {
+        // プレイヤーの勝ち - CPUの負けセリフを表示
+        setMessage(getRandomMessage('win'));
+        setIkemenExpression(IkemenExpressions.SAD);
       } else {
-        result = 'draw';
-        setMessage(getRandomMessage('draw'));
-        setIkemenExpression(IkemenExpressions.SURPRISED);
+        // CPUの勝ち - CPUの勝ちセリフを表示
+        setMessage(getRandomMessage('lose'));
+        setIkemenExpression(IkemenExpressions.HAPPY);
       }
+    } else if (scores.white > scores.black) {
+      // 白の勝ち
+      result = playerColor === 'white' ? 'win' : 'lose';
       
-      setGameResult(result);
-      
-      // オーバーレイと勝利演出を表示
-      setTimeout(() => {
-        setShowOverlay(true);
-        if (result === 'win') {
-          createConfetti();
-        }
-      }, 500);
-      
-      return true;
+      if (playerColor === 'white') {
+        // プレイヤーの勝ち - CPUの負けセリフを表示
+        setMessage(getRandomMessage('win'));
+        setIkemenExpression(IkemenExpressions.SAD);
+      } else {
+        // CPUの勝ち - CPUの勝ちセリフを表示
+        setMessage(getRandomMessage('lose'));
+        setIkemenExpression(IkemenExpressions.HAPPY);
+      }
+    } else {
+      // 引き分け
+      result = 'draw';
+      setMessage(getRandomMessage('draw'));
+      setIkemenExpression(IkemenExpressions.SURPRISED);
     }
     
-    return false;
-  };
+    setGameResult(result);
+    
+    // オーバーレイと勝利演出を表示
+    setTimeout(() => {
+      setShowOverlay(true);
+      if (result === 'win') {
+        createConfetti();
+      }
+    }, 500);
+    
+    return true;
+  }
+  
+  return false;
+};
 
   // 石を置く処理（プレイヤーとCPU共通）
   const handleMove = (row: number, col: number, color: string) => {
@@ -582,62 +631,98 @@ const OthelloGame = () => {
     }
   };
 
-// CPUの手を選択する関数（石の数で評価する版）
-const cpuMove = useCallback(() => {
-  const moves = getAvailableMoves(cpuColor);
-  
-  if (moves.length > 0) {
-    // 各手の評価値を計算
-    const scoredMoves = moves.map(move => {
-      // その手を打った場合の盤面をシミュレーション
-      const simulatedBoard = flipStones(move.row, move.col, cpuColor);
-      
-      // シミュレーション後の石の数を数える
-      const cpuStones = simulatedBoard.flat().filter((cell: string | null) => cell === cpuColor).length;
-      
-      return {
-        ...move,
-        score: cpuStones  // CPUの石の数を評価値とする
-      };
-    });
-    
-    // 評価値が最大の手を選ぶ（CPUの石が最も多くなる手）
-    const bestMove = scoredMoves.reduce((best, current) => 
-      current.score > best.score ? current : best, 
-      scoredMoves[0]
-    );
-    
-    // 少し待ってから手を打つ
-    setTimeout(() => {
-      handleMove(bestMove.row, bestMove.col, cpuColor);
-      setMessage(getRandomMessage('cpuMove'));
-      setIkemenExpression(IkemenExpressions.PROUD);
-    }, 1000);
-  } else {
-    // 手がない場合はパス
-    setCurrentTurn(playerColor);
-    setMessage("俺はパスだ。お前の番だぜ。");
-    setIkemenExpression(IkemenExpressions.SURPRISED);
-  }
-}, [cpuColor, playerColor, getAvailableMoves, handleMove, flipStones, board]);
-
   // セルがクリックされたときの処理
   const handleCellClick = (row: number, col: number) => {
     if (gameOver || currentTurn !== playerColor) return;
     
     if (isValidMove(row, col, playerColor)) {
       handleMove(row, col, playerColor);
+      
+      // ランダムでお兄さんの表情と台詞を変更
       setMessage(getRandomMessage('playerMove'));
-      setIkemenExpression(IkemenExpressions.SURPRISED);
+      
+      // プレイヤーの石の数が多い場合は驚き/ショック、少ない場合は余裕の表情
+      const currentScores = calculateScores(board);
+      const playerStones = playerColor === 'black' ? currentScores.black : currentScores.white;
+      const cpuStones = cpuColor === 'black' ? currentScores.black : currentScores.white;
+      
+      if (playerStones > cpuStones + 5) {
+        // プレイヤーがかなりリードしている場合
+        setIkemenExpression(IkemenExpressions.SHOCKED);
+      } else if (playerStones > cpuStones) {
+        // プレイヤーが少しリードしている場合
+        setIkemenExpression(IkemenExpressions.SURPRISED);
+      } else {
+        // CPUがリードしている場合
+        setIkemenExpression(Math.random() > 0.5 ? IkemenExpressions.PROUD : IkemenExpressions.SMILE);
+      }
     }
   };
+
+  // CPUの手を選択する関数（石の数で評価する版）
+  const cpuMove = useCallback(() => {
+    const moves = getAvailableMoves(cpuColor);
+    
+    if (moves.length > 0) {
+      // 各手の評価値を計算
+      const scoredMoves = moves.map(move => {
+        // その手を打った場合の盤面をシミュレーション
+        const simulatedBoard = flipStones(move.row, move.col, cpuColor);
+        
+        // シミュレーション後の石の数を数える
+        const cpuStones = simulatedBoard.flat().filter((cell: string | null) => cell === cpuColor).length;
+        
+        return {
+          ...move,
+          score: cpuStones  // CPUの石の数を評価値とする
+        };
+      });
+      
+      // 評価値が最大の手を選ぶ（CPUの石が最も多くなる手）
+      const bestMove = scoredMoves.reduce((best, current) => 
+        current.score > best.score ? current : best, 
+        scoredMoves[0]
+      );
+      
+      // 少し待ってから手を打つ
+      setTimeout(() => {
+        handleMove(bestMove.row, bestMove.col, cpuColor);
+        
+        // スコアに応じて表情とセリフを変更
+        setMessage(getRandomMessage('cpuMove'));
+        
+        const currentScores = calculateScores(board);
+        const playerStones = playerColor === 'black' ? currentScores.black : currentScores.white;
+        const cpuStones = cpuColor === 'black' ? currentScores.black : currentScores.white;
+        
+        if (cpuStones > playerStones + 5) {
+          // CPUが大きくリードしている場合
+          setIkemenExpression(IkemenExpressions.PROUD);
+        } else if (cpuStones > playerStones) {
+          // CPUが少しリードしている場合
+          setIkemenExpression(IkemenExpressions.HAPPY);
+        } else if (cpuStones < playerStones - 5) {
+          // CPUが大きく負けている場合
+          setIkemenExpression(IkemenExpressions.SHOCKED);
+        } else {
+          // CPUが少し負けている場合
+          setIkemenExpression(IkemenExpressions.NORMAL);
+        }
+      }, 1000);
+    } else {
+      // 手がない場合はパス
+      setCurrentTurn(playerColor);
+      setMessage("俺はパスだ。お前の番だぜ。");
+      setIkemenExpression(IkemenExpressions.SURPRISED);
+    }
+  }, [cpuColor, playerColor, board]);
 
   // 初期化とターン管理
   useEffect(() => {
     initializeGame();
   }, []);
 
-  // 有効な手の更新
+// 有効な手の更新
   useEffect(() => {
     if (gameStarted && !gameOver) {
       const moves = getAvailableMoves(currentTurn);
@@ -678,17 +763,21 @@ const cpuMove = useCallback(() => {
     setShowOverlay(false);
   };
 
-  // イケメンお兄さんの表情を表示（画像またはフォールバック絵文字）
+  // イケメンお兄さんの表情を表示する関数
   const renderIkemenFace = () => {
     const imageName = expressionToImage[ikemenExpression];
-    const imagePath = `/images/${imageName}`;
+    
+    // GitHub Pagesのベースパスを考慮した画像パス
+    const imagePath = `${process.env.PUBLIC_URL}/images/${imageName}`;
+    
+    console.log(`Attempting to load image: ${imagePath}`);
     
     return (
       <div style={styles.ikemenAvatar}>
         {imagesLoaded[ikemenExpression] !== false ? (
           <img 
-            src={imagePath} 
-            alt={`イケメンお兄さん ${ikemenExpression}`} 
+            src={imagePath}
+            alt={`お兄さん ${ikemenExpression}`} 
             style={styles.ikemenImage}
             onError={() => handleImageError(ikemenExpression)}
             onLoad={() => handleImageLoad(ikemenExpression)}
@@ -719,7 +808,7 @@ const cpuMove = useCallback(() => {
             ...styles.resultText, 
             ...styles.victoryText as any
           }}>
-            くそ！またやろうぜ！
+            あなたの勝ち！
           </div>
         );
       case 'lose':
@@ -728,7 +817,7 @@ const cpuMove = useCallback(() => {
             ...styles.resultText, 
             ...styles.defeatText as any
           }}>
-            やっぱり俺のが強かったな！
+            お兄さんの勝ち！
           </div>
         );
       case 'draw':
@@ -737,7 +826,7 @@ const cpuMove = useCallback(() => {
             ...styles.resultText, 
             ...styles.drawText as any
           }}>
-            引き分け！良い勝負だった！
+            引き分け！
           </div>
         );
       default:
@@ -753,7 +842,7 @@ const cpuMove = useCallback(() => {
       <div style={styles.infoContainer}>
         <p style={{ fontWeight: 'bold' }}>
           あなた: {playerColor === 'black' ? '黒' : '白'} / 
-          イケメンお兄さん: {cpuColor === 'black' ? '黒' : '白'}
+          お兄さん: {cpuColor === 'black' ? '黒' : '白'}
         </p>
         <p style={{ fontWeight: 'bold' }}>
           現在のターン: {currentTurn === 'black' ? '黒' : '白'}
@@ -774,8 +863,8 @@ const cpuMove = useCallback(() => {
       {/* イケメンお兄さんの表示エリア */}
       <div style={styles.ikemenContainer}>
         <div style={styles.ikemenHeader}>
-{renderIkemenFace()}
-          <p style={{ fontWeight: 'bold' }}>イケメンお兄さん</p>
+          {renderIkemenFace()}
+          <p style={{ fontWeight: 'bold' }}>お兄さん</p>
         </div>
         <p style={{ fontStyle: 'italic' }}>{message}</p>
       </div>
@@ -846,6 +935,25 @@ const cpuMove = useCallback(() => {
         <div style={styles.overlay} onClick={closeOverlay}>
           <div style={styles.overlayContent} onClick={(e) => e.stopPropagation()}>
             <h2 style={styles.gameOverTitle}>ゲーム終了！</h2>
+            
+            {/* お兄さんの表情と台詞を追加 */}
+            <div style={{ 
+              display: 'flex', 
+              alignItems: 'center', 
+              marginBottom: '16px',
+              justifyContent: 'center'
+            }}>
+              {renderIkemenFace()}
+              <div style={{ 
+                marginLeft: '16px', 
+                padding: '10px', 
+                backgroundColor: '#f3f4f6',
+                borderRadius: '8px',
+                maxWidth: '220px'
+              }}>
+                <p style={{ fontStyle: 'italic' }}>{message}</p>
+              </div>
+            </div>
             
             {getResultText()}
             
